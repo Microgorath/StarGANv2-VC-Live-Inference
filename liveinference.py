@@ -1,20 +1,9 @@
 #!/usr/bin/env python3
-"""Pass input directly to output.
-
-See https://www.assembla.com/spaces/portaudio/subversion/source/HEAD/portaudio/trunk/test/patest_wire.c
-
-"""
 
 import argparse
-# from configparser import Interpolation
-# import logging
-# import os.path
-# import pickle
 import librosa
 import torchaudio
 import yaml
-# import time
-# import matplotlib.pyplot as plt
 import noisereduce as nr
 import PySimpleGUI as sg
 import threading
@@ -22,7 +11,6 @@ import threading
 # import sounddevice as sd
 import soundcard as sc
 
-# from vocoder import *
 from models import *
 from Utils.JDC.model import JDCNet
 # MAX_WAV_VALUE = 32768.0
