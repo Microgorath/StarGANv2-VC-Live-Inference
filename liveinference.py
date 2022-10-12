@@ -244,7 +244,7 @@ def callback(indata, outdata, frames, time, status):
         pooled_mel = torch.nn.functional.max_pool1d(filtered_mel, kernel_size=silence_hold_size, stride=1, padding=silence_hold_size//2)
         silence_mask = pooled_mel < noise_threshold
         
-        out = convert(mel, starganv2, F0_model, ref, args.speaker)
+        out = convert(mel, starganv2, F0_model, ref, speaker)
         
         silence_mask = silence_mask.T[1:, ...]
         mel_silenced = out.masked_fill_(silence_mask, minimum_mel)
