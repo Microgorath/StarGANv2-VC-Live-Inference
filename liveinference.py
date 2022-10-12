@@ -9,9 +9,9 @@ import noisereduce as nr
 import PySimpleGUI as sg
 import threading
 import time as Time
+# import scipy.io
 
 import sounddevice as sd
-# import soundcard as sc
 
 from models import *
 from Utils.JDC.model import JDCNet
@@ -25,15 +25,15 @@ parser = argparse.ArgumentParser(description=__doc__)
 #                     help="number of channels") # not currently used
 parser.add_argument("-t", "--dtype", help="audio data type")
 parser.add_argument("-s", "--samplerate", type=float, help="sampling rate", default=24000)
-parser.add_argument("-b", "--blocksize", type=int, help="block size in frames, automatically determined from latency when 0", default=3000)
+parser.add_argument("-b", "--blocksize", type=int, help="block size in frames, automatically determined from latency when 0", default=0)
 parser.add_argument("-l", "--latency", type=float, help="desired latency between input and output", default=0.5)
 parser.add_argument("-w", "--wave-buffer-size", type=float, help="wave buffer size in frames", default=24000)
-parser.add_argument("-bl", "--blend-length", type=float, help="number of frames to crossfade between each block", default=50)
+parser.add_argument("-bl", "--blend-length", type=float, help="number of frames to crossfade between each block", default=400)
 parser.add_argument("-ngh", "--noise-gate-hold", type=float, help="time in ms to hold open the noise gate", default=120.0)
 parser.add_argument("-oms", "--out-mel-shift", type=int, 
                     help="shift converted mel back by this many mels, prevents artifacts at end of converted audio", default=0)
 parser.add_argument("-ws", "--wave-shift", type=int, 
-                    help="shift vocoder output back by this many samples, prevents artifacts at end of vocoder output", default=1)
+                    help="shift vocoder output back by this many samples, prevents artifacts at end of vocoder output", default=12000)
 parser.add_argument("-v", "--vocoder-model", type=str, help="path to vocoder model to use",
                     default="Vocoder/pretrained_PWG/checkpoint-400000steps.pkl")
 parser.add_argument("-sg", "--stargan-model", type=str, help="path to trained starganv2VC model to use", 
@@ -177,15 +177,7 @@ speaker = args.speaker
 ref_path = args.reference
 ref = compute_style(ref_path, starganv2, speaker, rng=rng)
 
-# Set the speaker and mic to be used for VC, use the system defaults if no device specified
-# input_device = sc.default_microphone()
-# output_device = sc.default_speaker()
-# if args.input_device != "":
-#     input_device = sc.get_microphone(args.input_device)
-# if args.output_device != "":
-#     output_device = sc.get_speaker(args.output_device)
-
-wave_buffer = np.zeros(args.wave_buffer_size) # Should this be on cuda?
+wave_buffer = np.zeros(args.wave_buffer_size)
 wave_cut = None
 noise = np.zeros(args.wave_buffer_size)
 noise_threshold = 0.0
@@ -193,6 +185,8 @@ enable_conversion = True
 enable_noisereduction = False
 enable_stationary_nr = False
 stop_audio = False
+
+block_num = 0 # for bug testing
 
 # Find the minimum mel bin amplitude by processing a wave of zeroes and taking the first element
 minimum_mel = preprocess(np.zeros(args.samplerate))[0, 0, 0]
@@ -209,6 +203,7 @@ silence_hold_size = int(np.ceil(args.noise_gate_hold / 1000. * args.samplerate /
 def callback(indata, outdata, frames, time, status):
     global wave_buffer
     global wave_cut
+    global block_num
 
     with torch.no_grad():
         audio = indata[:, 0].squeeze() # only gets first channel
@@ -224,12 +219,17 @@ def callback(indata, outdata, frames, time, status):
         buffer_cut = int(wave_buffer.shape[0] - args.wave_buffer_size)
         wave_buffer = wave_buffer[max(0, buffer_cut):, ...] # shift back by blocksize, so size is args.wave_buffer_size
 
+        # Add part of a reversed copy of the wave buffer to the end of the wave buffer
+        # that will be removed after vocoder output in order to prevent artifacts at end of vocoder output
+        # Also, shorten cut the same amount from the beginning of wave_buffer as was appended, to maintain buffer
+        wave_buffer_shifted = np.append(wave_buffer[args.wave_shift:], np.flip(wave_buffer)[:args.wave_shift])
+
         # If conversion is not enabled, just pass noise reduced audio to output.
         if not enable_conversion:
             outdata[:] = np.expand_dims(audio, axis=1)
             return
 
-        mel = preprocess(wave_buffer).to('cuda') 
+        mel = preprocess(wave_buffer_shifted).to('cuda') 
         # mel = mel[..., 1:] # omits first in 3rd dim
 
         # TODO: add these all to a pytorch sequence for neatness
@@ -257,7 +257,9 @@ def callback(indata, outdata, frames, time, status):
         wave = wave.cpu().numpy()
         wave.dtype = np.float32
 
-        # for bug testing, save wave here for each block, with file name according to 'time' argument
+        # for bug testing, save wave here for each block, with file name according to block number
+        # block_num = block_num + 1
+        # scipy.io.wavfile.write("out/" + str(block_num) + ".wav", args.samplerate, wave)
 
         if wave_cut is None:
             wave_left = wave.shape[0] - frames - args.blend_length - args.wave_shift
@@ -317,8 +319,6 @@ layout = [[sg.Button('Conversion Enabled', key='EC', button_color="green")],
         [sg.Text('Selected Voice:')],
         [sg.Button(str(i), key='VC_' + str(i), button_color="gray") for i in range(num_speakers)],
         [sg.ButtonMenu('Device Settings', audio_device_menu_layout, key='DEVICE_SETTINGS')]]
-        # [sg.Text('Input Device:'), sg.Combo([device['name'] for device in input_devices], key='IN_DEVICE', enable_events=True)],
-        # [sg.Text('Output Device:'), sg.Combo([device['name'] for device in output_devices], key='OUT_DEVICE', enable_events=True)]]
 
 window = sg.Window('Voice Conversion', layout)
 
